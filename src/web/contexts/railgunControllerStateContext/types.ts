@@ -1,10 +1,4 @@
 import { AddressState } from '@ambire-common/interfaces/domains'
-import type {
-  RailgunController,
-  RailgunAccountKeys,
-  RailgunAccountCache
-} from '@ambire-common/controllers/railgun/railgun'
-import { type RailgunAccount, type Indexer } from '@kohaku-eth/railgun'
 
 export type RailgunSyncStatus = 'idle' | 'running' | 'ready' | 'error'
 
@@ -13,102 +7,81 @@ export type RailgunBalance = {
   amount: string
 }
 
-export type TrackedRailgunAccount = {
-  id: string // e.g. "derived:0"
-  kind: 'derived' | 'imported'
-  index?: number
-  zkAddress?: string
-  balances: RailgunBalance[]
-  lastSyncedBlock: number
-}
-
 export type RailgunReactState = {
   status: RailgunSyncStatus
   error?: string
   balances: RailgunBalance[]
-  accounts: TrackedRailgunAccount[]
   chainId: number
-  lastSyncedBlock: number
 }
 
-export type Checkpoint = {
-  merkleTrees: { tree: string[][]; nullifiers: string[] }[]
-  logs: any[] // Using any to match original
-  endBlock: number
+type ValidationFormMsgs = {
+  amount: { success: boolean; message: string }
+  recipientAddress: { success: boolean; message: string }
+}
+
+// What screens can push into the local railgun form state.
+export type RailgunFormUpdate = {
+  selectedToken?: any
+  depositAmount?: string
+  withdrawalAmount?: string
+  addressState?: Partial<AddressState>
+  amountFieldMode?: 'token' | 'fiat'
+  amountInFiat?: string
+  maxAmount?: string
+  isRecipientAddressUnknown?: boolean
+  isRecipientAddressUnknownAgreed?: boolean
+  withdrawAsWETH?: boolean
+  privacyProvider?: string
+}
+
+// A railgun asset amount, matching the SDK plugin shape ({ __type:'erc20' }).
+export type RailgunAssetAmount = {
+  asset: { __type: 'erc20'; contract: `0x${string}` }
+  amount: bigint
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TYPES (simplified state machine)
+// Single source of truth for the Railgun UI. SDK-owned fields come from the
+// `railgunV2` background controller; form fields are local React state. There is
+// NO dependency on the legacy `railgun` controller.
 // ─────────────────────────────────────────────────────────────────────────────
-
 export type EnhancedRailgunControllerState = {
-  // existing bg fields
+  // ── local form state ──
+  selectedToken: any
   depositAmount: string
+  withdrawalAmount: string
+  addressState: AddressState
+  amountFieldMode: 'token' | 'fiat'
+  amountInFiat: string
+  maxAmount: string
+  isRecipientAddressUnknown: boolean
+  isRecipientAddressUnknownAgreed: boolean
+  programmaticUpdateCounter: number
+  withdrawAsWETH: boolean
   privacyProvider: string
   chainId: number
-  validationFormMsgs: {
-    amount: { success: boolean; message: string }
-    recipientAddress: { success: boolean; message: string }
-  }
-  addressState: AddressState
-  isRecipientAddressUnknown: boolean
+  validationFormMsgs: ValidationFormMsgs
+  latestBroadcastedToken: any
+
+  // ── SDK-backed (railgunV2 controller) ──
+  railgunAccountsState: RailgunReactState
+  zkAddress: string | null
   signAccountOpController: any
   latestBroadcastedAccountOp: any
-  latestBroadcastedToken: any
   hasProceeded: boolean
-  selectedToken: any
-  amountFieldMode: 'token' | 'fiat'
-  withdrawalAmount: string
-  amountInFiat: string
-  programmaticUpdateCounter: number
-  isRecipientAddressUnknownAgreed: boolean
-  maxAmount: string
-
-  // NEW: extremely simple client-side sync view
-  railgunAccountsState: RailgunReactState
-
-  // convenience flags
   isAccountLoaded: boolean
   isLoadingAccount: boolean
   isRefreshing: boolean
   isReadyToLoad: boolean
 
-  // actions
+  // ── actions ──
+  update: (u: RailgunFormUpdate) => void
+  resetForm: () => void
+  setUserProceeded: (proceeded: boolean) => void
+  destroyLatestBroadcastedAccountOp: () => void
   loadPrivateAccount: () => Promise<void>
   refreshPrivateAccount: () => Promise<void>
-  getAccountCache: (zkAddress: string, chainId: number) => Promise<RailgunAccountCache | null>
-
-  defaultRailgunKeys: RailgunAccountKeys | null
-
-  // synced account instance (created during loadPrivateAccount, available for direct use)
-  syncedDefaultRailgunAccount: RailgunAccount | null
-  syncedDefaultRailgunIndexer: Indexer | null
-} & Omit<
-  Partial<RailgunController>,
-  | 'validationFormMsgs'
-  | 'addressState'
-  | 'isRecipientAddressUnknown'
-  | 'signAccountOpController'
-  | 'latestBroadcastedAccountOp'
-  | 'latestBroadcastedToken'
-  | 'hasProceeded'
-  | 'selectedToken'
-  | 'amountFieldMode'
-  | 'withdrawalAmount'
-  | 'amountInFiat'
-  | 'programmaticUpdateCounter'
-  | 'isRecipientAddressUnknownAgreed'
-  | 'maxAmount'
-  | 'depositAmount'
-  | 'privacyProvider'
-  | 'chainId'
-  | 'defaultRailgunKeys'
->
-
-// not exported from railgun package, copied from kohaku/packages/provider => TxLog
-export interface RailgunLog {
-  blockNumber: number
-  topics: string[]
-  data: string
-  address: string
+  shield: (asset: RailgunAssetAmount) => void
+  unshieldTo: (asset: RailgunAssetAmount, to: `0x${string}`) => void
+  transferTo: (asset: RailgunAssetAmount, to: `0zk${string}`) => void
 }

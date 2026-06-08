@@ -9,7 +9,7 @@ import {
   SIGN_ACCOUNT_OP_TRANSFER,
   SIGN_ACCOUNT_OP_PRIVACY_POOLS,
   SIGN_ACCOUNT_OP_PRIVACY_POOLS_V1,
-  SIGN_ACCOUNT_OP_RAILGUN,
+  SIGN_ACCOUNT_OP_RAILGUN_V2,
   SignAccountOpType
 } from '@ambire-common/controllers/signAccountOp/helper'
 import { KeyIterator } from '@ambire-common/libs/keyIterator/keyIterator'
@@ -307,8 +307,8 @@ export const handleActions = async (
         signAccountOpType = SIGN_ACCOUNT_OP_PRIVACY_POOLS
       } else if (params.updateType === 'PrivacyPoolsV1') {
         signAccountOpType = SIGN_ACCOUNT_OP_PRIVACY_POOLS_V1
-      } else if (params.updateType === 'Railgun') {
-        signAccountOpType = SIGN_ACCOUNT_OP_RAILGUN
+      } else if (params.updateType === 'RailgunV2') {
+        signAccountOpType = SIGN_ACCOUNT_OP_RAILGUN_V2
       } else {
         signAccountOpType = SIGN_ACCOUNT_OP_TRANSFER
       }
@@ -355,8 +355,8 @@ export const handleActions = async (
         return mainCtrl?.privacyPoolsV1?.signAccountOpController?.update(params)
       }
 
-      if (params.updateType === 'Railgun') {
-        return mainCtrl?.railgun?.signAccountOpController?.update(params)
+      if (params.updateType === 'RailgunV2') {
+        return mainCtrl?.railgunV2?.signAccountOpController?.update(params)
       }
 
       // 'Transfer&TopUp'
@@ -526,40 +526,32 @@ export const handleActions = async (
       return mainCtrl.privacyPoolsV1.prepareUnshield(params.asset, params.to)
     case 'PRIVACY_POOLS_V1_CONTROLLER_UNSHIELD':
       return mainCtrl.privacyPoolsV1.unshield()
-    case 'RAILGUN_CONTROLLER_SDK_LOADED':
-      return mainCtrl.railgun.setSdkInitialized()
-    case 'RAILGUN_CONTROLLER_UPDATE_FORM':
-      return mainCtrl.railgun.update(params)
-    case 'RAILGUN_CONTROLLER_UNLOAD_SCREEN':
-      return mainCtrl.railgun.unloadScreen()
-    case 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE':
-      return mainCtrl.railgun?.signAccountOpController?.update(params)
-    case 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS':
-      return mainCtrl.railgun?.signAccountOpController?.updateStatus(params.status)
-    case 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED':
-      return mainCtrl.railgun.setUserProceeded(params.proceeded)
-    case 'RAILGUN_CONTROLLER_RESET_FORM':
-      return mainCtrl.railgun.resetForm()
-    case 'RAILGUN_CONTROLLER_DESTROY_SIGN_ACCOUNT_OP':
-      return mainCtrl.railgun.destroySignAccountOp()
-    case 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP':
-      return mainCtrl.railgun.destroyLatestBroadcastedAccountOp()
-    case 'RAILGUN_CONTROLLER_SYNC_SIGN_ACCOUNT_OP':
-      return mainCtrl.railgun.syncSignAccountOp(params.calls)
-    case 'RAILGUN_CONTROLLER_DIRECT_BROADCAST_WITHDRAWAL':
-      return mainCtrl.railgun.directBroadcastWithdrawal(params)
-    case 'RAILGUN_CONTROLLER_GET_DEFAULT_RAILGUN_KEYS':
-      console.log('[BG][RAILGUN] GET_DEFAULT_RAILGUN_KEYS action');
-      return mainCtrl.railgun.getDefaultRailgunKeys()
-    case 'RAILGUN_CONTROLLER_DERIVE_RAILGUN_KEYS':
-      console.log('[BG][RAILGUN] DERIVE_RAILGUN_KEYS action', params);
-      return mainCtrl.railgun.deriveRailgunKeys(params.index)
-    case 'RAILGUN_CONTROLLER_GET_ACCOUNT_CACHE':
-      console.log('[BG][RAILGUN] GET_ACCOUNT_CACHE action', params);
-      return mainCtrl.railgun.getRailgunAccountCache(params.zkAddress, params.chainId);
-    case 'RAILGUN_CONTROLLER_SET_ACCOUNT_CACHE':
-      console.log('[BG][RAILGUN] SET_ACCOUNT_CACHE action', params);
-      return mainCtrl.railgun.setRailgunAccountCache(params.zkAddress, params.chainId, params.cache)
+    case 'RAILGUN_V2_CONTROLLER_INIT':
+      return mainCtrl.railgunV2.init()
+    case 'RAILGUN_V2_CONTROLLER_SYNC':
+      return mainCtrl.railgunV2.sync()
+    case 'RAILGUN_V2_CONTROLLER_SHIELD':
+      return mainCtrl.railgunV2.prepareShield(params.asset)
+    case 'RAILGUN_V2_CONTROLLER_PREPARE_UNSHIELD':
+      return mainCtrl.railgunV2.prepareUnshield(params.asset, params.to)
+    case 'RAILGUN_V2_CONTROLLER_UNSHIELD':
+      return mainCtrl.railgunV2.unshield()
+    case 'RAILGUN_V2_CONTROLLER_PREPARE_TRANSFER':
+      return mainCtrl.railgunV2.prepareTransfer(params.asset, params.to)
+    case 'RAILGUN_V2_CONTROLLER_TRANSFER':
+      return mainCtrl.railgunV2.transfer()
+    case 'RAILGUN_V2_CONTROLLER_UNSHIELD_TO':
+      return mainCtrl.railgunV2.unshieldTo(params.asset, params.to)
+    case 'RAILGUN_V2_CONTROLLER_TRANSFER_TO':
+      return mainCtrl.railgunV2.transferTo(params.asset, params.to)
+    case 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE':
+      return mainCtrl.railgunV2?.signAccountOpController?.update(params)
+    case 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS':
+      return mainCtrl.railgunV2?.signAccountOpController?.updateStatus(params.status)
+    case 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED':
+      return mainCtrl.railgunV2.setUserProceeded(params.proceeded)
+    case 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP':
+      return mainCtrl.railgunV2.destroyLatestBroadcastedAccountOp()
     case 'ACTIONS_CONTROLLER_REMOVE_FROM_ACTIONS_QUEUE':
       return mainCtrl.requests.actions.removeActions([params.id], params.shouldOpenNextAction)
     case 'ACTIONS_CONTROLLER_FOCUS_ACTION_WINDOW':

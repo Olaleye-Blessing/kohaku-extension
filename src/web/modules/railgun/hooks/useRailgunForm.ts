@@ -1,29 +1,19 @@
 /* eslint-disable no-console */
 import { useCallback, useMemo, useState } from 'react'
 import { useModalize } from 'react-native-modalize'
-import { formatEther, formatUnits, getAddress, parseUnits } from 'viem'
+import { formatEther, formatUnits, getAddress } from 'viem'
 import { ZERO_ADDRESS } from '@ambire-common/services/socket/constants'
-import { Call } from '@ambire-common/libs/accountOp/types'
-import { randomId } from '@ambire-common/libs/humanizer/utils'
 import { PINNED_TOKENS } from '@ambire-common/consts/pinnedTokens'
 import useBackgroundService from '@web/hooks/useBackgroundService'
 import useRailgunControllerState from '@web/hooks/useRailgunControllerState'
 import useSelectedAccountControllerState from '@web/hooks/useSelectedAccountControllerState'
-import {
-  createRailgunAccount,
-  createRailgunIndexer,
-  getRailgunAddress,
-  RAILGUN_CONFIG_BY_CHAIN_ID,
-  type RailgunAccount,
-  type Indexer
-} from '@kohaku-eth/railgun'
-import { Interface } from 'ethers'
-
-const ERC20 = new Interface(["function approve(address spender, uint256 amount) external returns (bool)"]);
 
 /**
  * Hook for managing Railgun privacy protocol operations
- * Handles deposits, withdrawals, and form state specific to Railgun
+ * Handles deposits, withdrawals, and form state specific to Railgun.
+ *
+ * All on-chain/SDK work is delegated to the background `railgunV2` controller
+ * via dispatched actions — this hook no longer touches the Railgun SDK directly.
  */
 const useRailgunForm = () => {
   const { dispatch } = useBackgroundService()
@@ -42,12 +32,11 @@ const useRailgunForm = () => {
     privacyProvider,
     loadPrivateAccount,
     refreshPrivateAccount,
-    getAccountCache,
-    defaultRailgunKeys,
-    syncedDefaultRailgunAccount,
-    syncedDefaultRailgunIndexer,
     railgunAccountsState,
-    selectedToken
+    selectedToken,
+    update,
+    setUserProceeded,
+    shield
   } = useRailgunControllerState()
 
   const { account: userAccount, portfolio } = useSelectedAccountControllerState()
@@ -171,10 +160,8 @@ const useRailgunForm = () => {
 
   const handleUpdateForm = useCallback(
     (params: { [key: string]: any }) => {
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_UPDATE_FORM',
-        params: { ...params }
-      })
+      // Railgun form state is local React state now (no legacy controller).
+      update(params)
 
       // If privacyProvider is being updated, sync it to Privacy Pools controller as well
       if (params.privacyProvider !== undefined) {
@@ -186,49 +173,13 @@ const useRailgunForm = () => {
 
       setMessage(null)
     },
-    [dispatch]
+    [dispatch, update]
   )
 
   const openEstimationModalAndDispatch = useCallback(() => {
-    dispatch({
-      type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED',
-      params: {
-        proceeded: true
-      }
-    })
+    setUserProceeded(true)
     openEstimationModal()
-  }, [openEstimationModal, dispatch])
-
-  const syncSignAccountOp = useCallback(
-    async (calls: Call[]) => {
-      console.log('DEBUG: syncSignAccountOp called with calls:', calls)
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_SYNC_SIGN_ACCOUNT_OP',
-        params: { calls }
-      })
-    },
-    [dispatch]
-  )
-
-  const directBroadcastWithdrawal = useCallback(
-    async (params: {
-      to: string
-      data: string
-      value: string
-      chainId: number
-      isInternalTransfer?: boolean
-      tokenAddress: string
-      amount: string
-      recipient: string
-      feeFormatted: string | null
-    }): Promise<void> => {
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_DIRECT_BROADCAST_WITHDRAWAL',
-        params
-      })
-    },
-    [dispatch]
-  )
+  }, [openEstimationModal, setUserProceeded])
 
   const handleDeposit = async () => {
     console.log('DEBUG: RAILGUN handleDeposit called')
@@ -302,94 +253,28 @@ const useRailgunForm = () => {
       return
     }
 
-    if (!defaultRailgunKeys) {
-      const errorMsg = 'No railgun keys found. Please ensure your account is properly set up.'
+    // alpha.10 of the railgun SDK only supports shielding ERC20 tokens (the
+    // plugin's tokenGuard rejects native assets). Native ETH must be wrapped to
+    // WETH first; surface a clear error rather than silently failing.
+    if (isEth) {
+      const errorMsg =
+        'Native ETH shielding is not supported by this SDK version. Please wrap to WETH and shield the ERC20 token instead.'
       console.error('DEBUG:', errorMsg)
       setMessage({ type: 'error', text: errorMsg })
       return
     }
 
     try {
-      const railgunAccount = await createRailgunAccount({
-        credential: { type: 'key', spendingKey: defaultRailgunKeys?.spendingKey, viewingKey: defaultRailgunKeys?.viewingKey, ethKey: defaultRailgunKeys?.shieldKeySigner },
-        indexer: await createRailgunIndexer({
-          network: RAILGUN_CONFIG_BY_CHAIN_ID[chainId.toString() as keyof typeof RAILGUN_CONFIG_BY_CHAIN_ID],
-        }),
-      });
-
-      console.log("DEBUG: IsEth:", isEth)
-      console.log("DEBUG: Token address:", selectedToken.address)
-      console.log("DEBUG: Token decimals:", tokenDecimals)
-      console.log("DEBUG: Deposit amount (parsed):", depositAmountBigInt.toString())
-
-      // Create shield transaction
-      const txData = isEth 
-        ? await railgunAccount?.shieldNative(depositAmountBigInt)
-        : await railgunAccount?.shield(selectedToken.address, depositAmountBigInt);
-
-      if (!txData) {
-        const errorMsg = 'Failed to create shield transaction. Please try again.'
-        console.error('DEBUG:', errorMsg)
-        setMessage({ type: 'error', text: errorMsg })
-        return
-      }
-
-      console.log('DEBUG: Created shield tx:', txData)
-      console.log('DEBUG: Shield tx to:', txData.to)
-
-      // Sanity check: verify the shield transaction is for the correct token
-      // For ERC20 tokens, the transaction value should be 0 (not native ETH)
-      if (!isEth) {
-        const txValue = BigInt(txData.value || '0')
-        if (txValue > 0n) {
-          const errorMsg = `Token mismatch detected: Selected ERC20 token ${selectedToken.symbol} (${selectedToken.address}) but shield transaction has non-zero ETH value (${txValue.toString()}). This suggests ETH is being used instead of the selected token. Aborting to prevent wrong token deposit.`
-          console.error('DEBUG:', errorMsg)
-          setMessage({ type: 'error', text: errorMsg })
-          return
-        }
-        
-        // Additional check: verify token address is not ETH address
-        if (selectedToken.address.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
-          const errorMsg = `Token configuration error: Selected token ${selectedToken.symbol} has ETH address (${ZERO_ADDRESS}) but is not marked as native ETH. Aborting.`
-          console.error('DEBUG:', errorMsg)
-          setMessage({ type: 'error', text: errorMsg })
-          return
-        }
-      } else {
-        // For ETH deposits, verify the value matches our deposit amount
-        const txValue = BigInt(txData.value || '0')
-        if (txValue !== depositAmountBigInt) {
-          const errorMsg = `Amount mismatch: Expected ${depositAmountBigInt.toString()} wei but shield transaction has ${txValue.toString()} wei. Aborting.`
-          console.error('DEBUG:', errorMsg)
-          setMessage({ type: 'error', text: errorMsg })
-          return
-        }
-      }
-
-      let calls: Call[] = [];
-      const requestId = randomId();
-      
-      if (!isEth) {
-        // For ERC20 tokens, add approve call
-        calls.push({
-          to: getAddress(selectedToken.address),
-          data: ERC20.encodeFunctionData('approve', [txData.to, depositAmountBigInt]),
-          value: BigInt(0),
-          fromUserRequestId: requestId
-        })
-      }
-      
-      calls.push({
-        to: getAddress(txData.to),
-        data: txData.data,
-        value: isEth ? BigInt(txData.value || '0') : BigInt(0),
-        fromUserRequestId: requestId
+      // Hand off to the railgunV2 controller: it calls prepareShield(), prepends
+      // the ERC20 approval, and routes the resulting calls through its own
+      // SignAccountOpController. We then open the estimation modal to drive
+      // signing & broadcast (updateType 'RailgunV2').
+      shield({
+        asset: { __type: 'erc20', contract: getAddress(selectedToken.address) },
+        amount: depositAmountBigInt
       })
 
-      await syncSignAccountOp(calls)
-      console.log('DEBUG: About to open estimation modal')
       openEstimationModalAndDispatch()
-      console.log('DEBUG: Estimation modal opened')
       setMessage(null) // Clear any previous errors
     } catch (error: any) {
       const errorMsg = `Failed to create deposit transaction: ${error?.message || 'Unknown error'}`
@@ -397,26 +282,6 @@ const useRailgunForm = () => {
       setMessage({ type: 'error', text: errorMsg })
     }
   }
-
-  /**
-   * Gets the synced Railgun account instance directly from context state
-   * The account is created and stored during loadPrivateAccount/refreshPrivateAccount
-   * This avoids the need to reconstitute from cache
-   */
-  const getSyncedDefaultRailgunAccount = useCallback((): {
-    account: RailgunAccount
-    indexer: Indexer
-  } | null => {
-    if (!syncedDefaultRailgunAccount || !syncedDefaultRailgunIndexer) {
-      console.warn('[useRailgunForm] Synced account not available. Ensure loadPrivateAccount has been called first.')
-      return null
-    }
-
-    return {
-      account: syncedDefaultRailgunAccount,
-      indexer: syncedDefaultRailgunIndexer
-    }
-  }, [syncedDefaultRailgunAccount, syncedDefaultRailgunIndexer])
 
   const handleMultipleWithdrawal = useCallback(async () => {
     console.log('RAILGUN WITHDRAWAL: Implementation coming soon')
@@ -485,10 +350,7 @@ const useRailgunForm = () => {
     handleSelectedAccount,
     loadPrivateAccount,
     refreshPrivateAccount,
-    syncedDefaultRailgunAccount: getSyncedDefaultRailgunAccount,
-    syncSignAccountOp,
-    openEstimationModalAndDispatch,
-    directBroadcastWithdrawal
+    openEstimationModalAndDispatch
   }
 }
 

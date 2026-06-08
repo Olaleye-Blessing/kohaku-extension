@@ -1,0 +1,36 @@
+My backend team has updated the @kohaku-eth/railgun package to another version. I asked this:
+-------------
+
+To integrate the new sdk, is the tests folder, https://github.com/ethereum/kohaku/tree/master/crates/railgun-ts/tests, enough to put me through?
+-------------
+
+The team lead told me to do this:
+------------------------------------
+you basically want to
+
+1. instantiate the plugin by implementing the “host interface” rather than deriving the keys directly and storing the railgun data directly (and injecting all these things into the railgun object). This means implenting a “keystore” (for deriving the railgun keys) and a “storage” (for storing and retreiving railgun data fron local storage) and passing an ethereum rpc for the rpc
+
+2. use the plugin object to prepareShield() to get the data neededto do shield transactions. You can now handle approval (if needed) and broadcast of the shield tx.
+
+3. use plugin prepareUnshield() to get the unshield data needed for user unshied, then broadcastPrivateOp(<data>) to final braodcast the transaction to relayer
+
+3. plugin.balances() should get you all the balances for the user account so you can show railgun balances. One thing to note is right now new balnces take a little longer to show up.
+
+Notice: you no longer need to do ANY event indexing / railgun state management in the wallet. Its all done by the sdk
+
+i know thats a lot of stuff so feel free to ask further questions. You can look at how privacyPools implemented the host interface and did some of these things in their part of the wallet
+
+only thing is our deriveKeys is dofferent you need to use that railgun algorithm for deriving the key from the path (which is currently in the wallet code you just need to adapt it to fit the host interface instead of in the derivation happening directly in the RailgunController)
+
+Storage and Rpc should be roughly the same as privacypools did it
+
+
+Privacypools implementation is here: /src/ambire-common/src/controllers/privacyPools
+------------------------------------
+
+Starting with instantiating, how do I do this? These are the links to the test files:
+
+https://github.com/ethereum/kohaku/blob/master/crates/railgun-ts/tests/plugin-sync.test.ts
+https://github.com/ethereum/kohaku/blob/master/crates/railgun-ts/tests/plugin-transact-broadcast.test.ts
+https://github.com/ethereum/kohaku/blob/master/crates/railgun-ts/tests/transact-utxo.test.ts
+https://github.com/ethereum/kohaku/blob/master/crates/railgun-ts/tests/utils.ts

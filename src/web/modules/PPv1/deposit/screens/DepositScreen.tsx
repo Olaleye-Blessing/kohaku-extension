@@ -46,7 +46,8 @@ function TransferScreen() {
   const { accountsOps } = useActivityControllerState()
   const {
     selectedToken: railgunSelectedToken,
-    latestBroadcastedToken: railgunLatestBroadcastedToken
+    latestBroadcastedToken: railgunLatestBroadcastedToken,
+    resetForm: railgunResetForm
   } = useRailgunControllerState()
 
   const {
@@ -123,9 +124,7 @@ function TransferScreen() {
       dashGoBack()
     }
 
-    dispatch({
-      type: 'RAILGUN_CONTROLLER_UNLOAD_SCREEN'
-    })
+    railgunResetForm()
     dispatch({
       type: 'PRIVACY_POOLS_CONTROLLER_UNLOAD_SCREEN'
     })
@@ -223,9 +222,7 @@ function TransferScreen() {
       dispatch({
         type: 'PRIVACY_POOLS_CONTROLLER_RESET_FORM'
       })
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_RESET_FORM'
-      })
+      railgunResetForm()
 
       // Reset hasProceeded for the currently selected controller when navigating back
       dispatch({
@@ -235,7 +232,7 @@ function TransferScreen() {
         }
       })
       dispatch({
-        type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED',
+        type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED',
         params: {
           proceeded: false
         }
@@ -244,7 +241,7 @@ function TransferScreen() {
   }, [dispatch])
 
   const handleBroadcastAccountOp = useCallback(() => {
-    const updateType = privacyProvider === 'railgun' ? 'Railgun' : 'PrivacyPoolsV1'
+    const updateType = privacyProvider === 'railgun' ? 'RailgunV2' : 'PrivacyPoolsV1'
     dispatch({
       type: 'MAIN_CONTROLLER_HANDLE_SIGN_AND_BROADCAST_ACCOUNT_OP',
       params: {
@@ -257,7 +254,7 @@ function TransferScreen() {
     (status: SigningStatus) => {
       const actionType =
         privacyProvider === 'railgun'
-          ? 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS'
+          ? 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS'
           : 'PRIVACY_POOLS_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS'
       dispatch({
         type: actionType,
@@ -271,20 +268,13 @@ function TransferScreen() {
 
   const updateController = useCallback(
     (params: { signingKeyAddr?: Key['addr']; signingKeyType?: Key['type'] }) => {
-      console.log(
-        'DEBUG: updateController called with params:',
-        params,
-        'privacyProvider:',
-        privacyProvider
-      )
-      const actionType =
-        privacyProvider === 'railgun'
-          ? 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE'
-          : 'PRIVACY_POOLS_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE'
-      dispatch({
-        type: actionType,
-        params
-      })
+      // Branch per-provider rather than computing a union action type, so the
+      // dispatch payload matches a single discriminated Action member.
+      if (privacyProvider === 'railgun') {
+        dispatch({ type: 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE', params })
+      } else {
+        dispatch({ type: 'PRIVACY_POOLS_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE', params })
+      }
     },
     [dispatch, privacyProvider]
   )
@@ -362,13 +352,12 @@ function TransferScreen() {
     }
 
     dispatch({
-      type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
+      type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
     })
 
     dispatch({ type: 'PRIVACY_POOLS_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
-    dispatch({ type: 'RAILGUN_CONTROLLER_UNLOAD_SCREEN' })
+    railgunResetForm()
     dispatch({ type: 'PRIVACY_POOLS_CONTROLLER_UNLOAD_SCREEN' })
-    dispatch({ type: 'RAILGUN_CONTROLLER_RESET_FORM' })
     dispatch({ type: 'PRIVACY_POOLS_CONTROLLER_RESET_FORM' })
 
     // Reset hasProceeded for the currently selected controller
@@ -380,7 +369,7 @@ function TransferScreen() {
       }
     })
     dispatch({
-      type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED',
+      type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED',
       params: {
         proceeded: false
       }
@@ -476,7 +465,7 @@ function TransferScreen() {
 
       {!latestBroadcastedAccountOp && (
         <Estimation
-          updateType={privacyProvider === 'railgun' ? 'Railgun' : 'PrivacyPoolsV1'}
+          updateType={privacyProvider === 'railgun' ? 'RailgunV2' : 'PrivacyPoolsV1'}
           estimationModalRef={estimationModalRef}
           closeEstimationModal={closeEstimationModal}
           updateController={updateController}

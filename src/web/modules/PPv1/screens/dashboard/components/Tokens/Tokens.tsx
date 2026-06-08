@@ -14,7 +14,6 @@ import { setStringAsync } from '@common/utils/clipboard'
 import { getUiType } from '@web/utils/uiType'
 import useRailgunControllerState from '@web/hooks/useRailgunControllerState'
 import useRailgunForm from '@web/modules/railgun/hooks/useRailgunForm'
-import { getRailgunAddress } from '@kohaku-eth/railgun'
 import { useCustomHover, AnimatedPressable } from '@web/hooks/useHover'
 import { ZERO_ADDRESS } from '@ambire-common/services/socket/constants'
 import { PrivacyProtocolType } from '@web/modules/PPv1/types/privacy'
@@ -69,8 +68,9 @@ const Tokens = ({
   const { portfolio } = useSelectedAccountControllerState()
   const { isAccountLoaded: railgunIsAccountLoaded, totalPrivateBalancesFormatted } =
     useRailgunForm()
-  const { defaultRailgunKeys } = useRailgunControllerState()
-  const [railgunAddress, setRailgunAddress] = useState<string | null>(null)
+  // The railgun (0zk) address now comes from the railgunV2 controller's plugin
+  // instanceId(), surfaced via the context as `zkAddress`.
+  const { zkAddress: railgunAddress } = useRailgunControllerState()
 
   const [bindCopyIconAnim, copyIconAnimStyle] = useCustomHover({
     property: 'opacity',
@@ -175,28 +175,6 @@ const Tokens = ({
 
   // New: decide if we should show the Railgun loading row
   const showRailgunLoadingRow = !railgunIsAccountLoaded
-
-  // Calculate railgun address from defaultRailgunKeys
-  useEffect(() => {
-    const calculateRailgunAddress = async () => {
-      if (defaultRailgunKeys) {
-        try {
-          const address = await getRailgunAddress({
-            type: 'key',
-            spendingKey: defaultRailgunKeys.spendingKey,
-            viewingKey: defaultRailgunKeys.viewingKey
-          })
-          setRailgunAddress(address)
-        } catch (error) {
-          console.error('Failed to calculate railgun address:', error)
-          setRailgunAddress(null)
-        }
-      } else {
-        setRailgunAddress(null)
-      }
-    }
-    calculateRailgunAddress()
-  }, [defaultRailgunKeys])
 
   const handleCopyRailgunAddress = useCallback(async () => {
     if (railgunAddress) {

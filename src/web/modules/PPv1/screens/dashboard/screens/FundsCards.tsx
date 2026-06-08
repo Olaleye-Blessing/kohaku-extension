@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native'
 
-import { getRailgunAddress } from '@kohaku-eth/railgun'
 import AddIcon from '@common/assets/svg/AddIcon'
 import RightArrowIcon from '@common/assets/svg/RightArrowIcon'
 import CopyText from '@common/components/CopyText'
@@ -120,27 +119,9 @@ const NewFundsCards = ({
 }: Props) => {
   const MAX_SHOWN_PUBLIC_ACCOUNTS = 5
   const { styles, theme } = useTheme(getStyles)
-  const { defaultRailgunKeys } = useRailgunControllerState()
-  const [railgunAddress, setRailgunAddress] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!defaultRailgunKeys) return
-
-    const calc = async () => {
-      try {
-        const addr = await getRailgunAddress({
-          type: 'key',
-          spendingKey: defaultRailgunKeys.spendingKey,
-          viewingKey: defaultRailgunKeys.viewingKey
-        })
-        setRailgunAddress(addr)
-      } catch {
-        setRailgunAddress(null)
-      }
-    }
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    calc()
-  }, [defaultRailgunKeys])
+  // The railgun (0zk) address now comes straight from the railgunV2 controller's
+  // plugin instanceId(), surfaced via the context as `zkAddress`.
+  const { zkAddress: railgunAddress } = useRailgunControllerState()
 
   const truncatedAddr = railgunAddress
     ? `${railgunAddress.slice(0, 8)}...${railgunAddress.slice(-4)}`

@@ -8,6 +8,7 @@ import { BatchWithdrawalParams } from '@ambire-common/controllers/privacyPools/p
 import { ReviewStatus } from '@web/contexts/privacyPoolsControllerStateContext'
 import useBackgroundService from '@web/hooks/useBackgroundService'
 import usePrivacyPoolsControllerState from '@web/hooks/usePrivacyPoolsControllerState'
+import useRailgunControllerState from '@web/hooks/useRailgunControllerState'
 import useSelectedAccountControllerState from '@web/hooks/useSelectedAccountControllerState'
 import { prepareWithdrawalProofInput, transformProofForRelayerApi } from '../utils/withdrawal'
 import { transformRagequitProofForContract } from '../utils/ragequit'
@@ -18,6 +19,7 @@ import { PoolAccount } from '../sdk/noteSelection/types'
 
 const usePrivacyPoolsForm = () => {
   const { dispatch } = useBackgroundService()
+  const { update: railgunUpdate } = useRailgunControllerState()
   const {
     chainId,
     mtRoots,
@@ -225,17 +227,15 @@ const usePrivacyPoolsForm = () => {
         params: { ...params }
       })
 
-      // If privacyProvider is being updated, sync it to Railgun controller as well
+      // If privacyProvider is being updated, sync it to the Railgun form (local
+      // React state) as well.
       if (params.privacyProvider !== undefined) {
-        dispatch({
-          type: 'RAILGUN_CONTROLLER_UPDATE_FORM',
-          params: { privacyProvider: params.privacyProvider }
-        })
+        railgunUpdate({ privacyProvider: params.privacyProvider })
       }
 
       setMessage(null)
     },
-    [dispatch]
+    [dispatch, railgunUpdate]
   )
 
   const directBroadcastWithdrawal = useCallback(

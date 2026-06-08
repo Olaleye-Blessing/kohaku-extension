@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatUnits, parseUnits, getAddress } from 'viem'
-import { RAILGUN_CONFIG_BY_CHAIN_ID } from '@kohaku-eth/railgun'
 import { AccountOpStatus } from '@ambire-common/libs/accountOp/types'
 
 import { AddressStateOptional } from '@ambire-common/interfaces/domains'
@@ -118,7 +117,9 @@ const TransferScreen = () => {
     withdrawAsWETH: railgunWithdrawAsWETH,
     railgunAccountsState,
     latestBroadcastedAccountOp: railgunLatestBroadcastedAccountOp,
-    latestBroadcastedToken: railgunLatestBroadcastedToken
+    latestBroadcastedToken: railgunLatestBroadcastedToken,
+    update: railgunUpdate,
+    resetForm: railgunResetForm
   } = useRailgunControllerState()
 
   const changeProtocol = (protocol: SelectValue) => {
@@ -128,7 +129,7 @@ const TransferScreen = () => {
 
     if (newProtocol === 'railgun') {
       dispatch({
-        type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
+        type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
       })
     }
 
@@ -137,7 +138,7 @@ const TransferScreen = () => {
 
   const cleanUp = useCallback(() => {
     // Clean up state before navigating - use the appropriate controller based on active protocol
-    dispatch({ type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
+    dispatch({ type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
     dispatch({ type: 'PRIVACY_POOLS_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
 
     // Reset hasProceeded for both controllers
@@ -147,17 +148,15 @@ const TransferScreen = () => {
       params: { proceeded: false }
     })
     dispatch({
-      type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED',
+      type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED',
       params: { proceeded: false }
     })
 
-    dispatch({
-      type: 'RAILGUN_CONTROLLER_RESET_FORM'
-    })
+    railgunResetForm()
     dispatch({
       type: 'PRIVACY_POOLS_CONTROLLER_RESET_FORM'
     })
-  }, [dispatch])
+  }, [dispatch, railgunResetForm])
 
   const railgunTotalApprovedBalance = useMemo(() => {
     if (railgunAccountsState.balances.length > 0) {
@@ -174,12 +173,9 @@ const TransferScreen = () => {
 
   const handleRailgunUpdateForm = useCallback(
     (params: { [key: string]: any }) => {
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_UPDATE_FORM',
-        params: { ...params }
-      })
+      railgunUpdate(params)
     },
-    [dispatch]
+    [railgunUpdate]
   )
 
   const hasInitializedAddressRef = useRef(false)
@@ -389,9 +385,7 @@ const TransferScreen = () => {
       dispatch({
         type: 'PRIVACY_POOLS_CONTROLLER_UNLOAD_SCREEN'
       })
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_UNLOAD_SCREEN'
-      })
+      railgunResetForm()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -437,12 +431,9 @@ const TransferScreen = () => {
   // Railgun address state handlers
   const setRailgunAddressState = useCallback(
     (newPartialAddressState: AddressStateOptional) => {
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_UPDATE_FORM',
-        params: { addressState: newPartialAddressState }
-      })
+      railgunUpdate({ addressState: newPartialAddressState })
     },
-    [dispatch]
+    [railgunUpdate]
   )
 
   const handleRailgunCacheResolvedDomain = useCallback(
@@ -677,7 +668,7 @@ const TransferScreen = () => {
     ) {
       // Error states: clean up and navigate directly (no banner to hide)
       dispatch({
-        type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
+        type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
       })
       dispatch({
         type: 'PRIVACY_POOLS_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
@@ -689,7 +680,7 @@ const TransferScreen = () => {
         }
       })
       dispatch({
-        type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED',
+        type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED',
         params: {
           proceeded: false
         }
@@ -718,188 +709,58 @@ const TransferScreen = () => {
         railgunAddressState.ensAddress ||
         railgunAddressInputState.address
 
-      // Debug logging
-      console.log('handleRailgunWithdrawal - Input values:', {
-        amount,
-        address,
-        amountFieldValue: railgunAmountFieldValue,
-        withdrawalAmount: railgunWithdrawalAmount,
-        addressStateFieldValue: railgunAddressStateFieldValue,
-        addressInputStateAddress: railgunAddressInputState.address,
-        addressStateEnsAddress: railgunAddressState.ensAddress,
-        selectedToken: railgunSelectedToken
-      })
-
       // Validate form inputs
       if (!railgunSelectedToken || !amount || !address) {
-        console.error('Missing required form inputs:', {
-          token: railgunSelectedToken,
-          amount,
-          address,
-          amountFieldValue: railgunAmountFieldValue,
-          withdrawalAmount: railgunWithdrawalAmount,
-          addressInputState: railgunAddressInputState.address,
-          addressStateFieldValue: railgunAddressStateFieldValue,
-          addressStateEnsAddress: railgunAddressState.ensAddress
-        })
+        console.error('Missing required form inputs')
         setIsSubmittingState(false)
         return
       }
 
-      // Get the synced default Railgun account instance directly from state
-      console.log('Getting synced Railgun account from state...')
-      const accountData = railgunForm.syncedDefaultRailgunAccount()
-      if (!accountData) {
-        console.error(
-          'Failed to get synced Railgun account. Ensure loadPrivateAccount has been called.'
-        )
-        setIsSubmittingState(false)
-        return
-      }
-
-      // Clear any old transaction state before submitting a new transaction
-      // This ensures old "Private Transfer Done!" states don't persist when starting a new withdrawal
-      dispatch({
-        type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
-      })
-
-      const { account, indexer } = accountData
-      console.log('Railgun account instance ready:', { account, indexer })
+      // Clear any old transaction state before submitting a new transaction so
+      // stale "Private Transfer Done!" states don't persist.
+      dispatch({ type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
 
       // Parse amount to BigInt using token decimals
       const tokenDecimals = railgunSelectedToken.decimals || 18
       const amountBigInt = parseUnits(amount, tokenDecimals)
 
-      // Check if address is a 0zk Railgun address (starts with "0zk")
+      // 0zk recipient → private internal transfer; 0x recipient → unshield.
       const isRailgunAddress = address.toLowerCase().startsWith('0zk')
-
-      // For 0zk addresses, use the address as-is (no checksumming needed)
-      // For 0x addresses, ensure address is properly formatted (checksummed)
       const receiver = isRailgunAddress ? address : getAddress(address)
 
-      // Check if this is native ETH and user wants WETH instead
-      // TODO: Get from checkbox state when WETH checkbox is implemented
-      const withdrawAsWETH = false
+      // alpha.10 only supports ERC20 ops (the plugin's tokenGuard rejects native
+      // assets), so native ETH must be handled as WETH upstream.
       const isNativeETH = railgunSelectedToken.address?.toLowerCase() === ZERO_ADDRESS.toLowerCase()
-      let txData
-
-      try {
-        if (isRailgunAddress) {
-          // This is a Private Internal Railgun Transfer (0zk address)
-          // Use transfer/transferNative instead of unshield/unshieldNative
-          isInternalTransfer = true
-          let tokenAddress = railgunSelectedToken.address
-          if (isNativeETH) {
-            const networkConfig =
-              RAILGUN_CONFIG_BY_CHAIN_ID[
-                railgunChainId?.toString() as keyof typeof RAILGUN_CONFIG_BY_CHAIN_ID
-              ]
-            if (!networkConfig?.WETH) {
-              console.error('WETH address not found for chainId:', railgunChainId)
-              setIsSubmittingState(false)
-              return
-            }
-            tokenAddress = networkConfig.WETH
-          }
-
-          console.log('Calling account.transfer for internal transfer with:', {
-            tokenAddress,
-            amount: amountBigInt.toString(),
-            receiver
-          })
-
-          // TODO: Verify that account.transfer exists and has the correct signature
-          // The receiver should be the 0zk address
-          txData = await account.transfer(tokenAddress, amountBigInt, receiver)
-
-          console.log('Internal transfer txData:', txData)
-        } else {
-          // This is a regular withdrawal (0x address) - use unshield
-          if (isNativeETH && !withdrawAsWETH) {
-            // Use native ETH unshield
-            console.log('Calling account.unshieldNative with:', {
-              amount: amountBigInt.toString(),
-              receiver
-            })
-            txData = await account.unshieldNative(amountBigInt, receiver)
-          } else {
-            let tokenAddress = railgunSelectedToken.address
-
-            // If native ETH but user wants WETH, use WETH address
-            if (isNativeETH && withdrawAsWETH) {
-              const networkConfig =
-                RAILGUN_CONFIG_BY_CHAIN_ID[
-                  railgunChainId?.toString() as keyof typeof RAILGUN_CONFIG_BY_CHAIN_ID
-                ]
-              if (!networkConfig?.WETH) {
-                console.error('WETH address not found for chainId:', railgunChainId)
-                setIsSubmittingState(false)
-                return
-              }
-              tokenAddress = networkConfig.WETH
-            }
-
-            console.log('Calling account.unshield with:', {
-              tokenAddress,
-              amount: amountBigInt.toString(),
-              receiver
-            })
-            txData = await account.unshield(tokenAddress, amountBigInt, receiver)
-          }
-
-          console.log('Unshield txData:', txData)
-        }
-      } catch (error) {
-        console.error('Error generating transaction:', error)
+      if (isNativeETH) {
         setIsSubmittingState(false)
-        const errorMessage = isInternalTransfer
-          ? 'Unable to generate internal transfer transaction. Please try again.'
-          : 'Unable to generate withdrawal transaction. Please try again.'
-        addToast(errorMessage, {
-          type: 'error',
-          timeout: 8000
-        })
+        addToast(
+          'Native ETH is not supported by this SDK version. Please use the wrapped (WETH) token.',
+          { type: 'error', timeout: 8000 }
+        )
         return
       }
 
-      // Submit transaction directly to relayer (no estimation modal)
-      // The controller will set latestBroadcastedAccountOp immediately, causing UI to show track screen
-      console.log(
-        isInternalTransfer
-          ? 'Submitting internal transfer to relayer...'
-          : 'Submitting withdrawal to relayer...'
-      )
+      const asset = {
+        asset: { __type: 'erc20' as const, contract: getAddress(railgunSelectedToken.address) },
+        amount: amountBigInt
+      }
 
-      // 0.25% fee for unshields, none for internal transfers
-      const feeFormatted = isInternalTransfer
-        ? '0'
-        : `${formatUnits((amountBigInt * 25n) / 10000n, tokenDecimals)} ${
-            railgunSelectedToken.symbol || 'ETH'
-          }`
-
-      await railgunForm.directBroadcastWithdrawal({
-        to: txData.to,
-        data: txData.data,
-        value:
-          isNativeETH && !withdrawAsWETH
-            ? typeof txData.value === 'string'
-              ? txData.value
-              : txData.value.toString()
-            : '0',
-        chainId: railgunChainId || 11155111,
-        isInternalTransfer,
-        tokenAddress: railgunSelectedToken.address,
-        amount: amountBigInt.toString(),
-        recipient: receiver,
-        feeFormatted
-      })
-      console.log(
-        isInternalTransfer
-          ? 'Internal transfer submitted successfully'
-          : 'Withdrawal submitted successfully'
-      )
-      // Note: isSubmitting will be reset when the transaction completes or fails
-      // The UI will show the track screen immediately after directBroadcastWithdrawal is called
+      // Hand off to the railgunV2 controller, which builds the proof and relays
+      // it through the SDK's Waku broadcaster in one shot.
+      if (isRailgunAddress) {
+        isInternalTransfer = true
+        dispatch({
+          type: 'RAILGUN_V2_CONTROLLER_TRANSFER_TO',
+          params: { asset, to: receiver as `0zk${string}` }
+        })
+      } else {
+        dispatch({
+          type: 'RAILGUN_V2_CONTROLLER_UNSHIELD_TO',
+          params: { asset, to: receiver as `0x${string}` }
+        })
+      }
+      // The controller sets latestBroadcastedAccountOp immediately so the UI can
+      // switch to the tracking screen; it resolves the op asynchronously.
     } catch (error) {
       console.error('Error submitting transaction:', error)
       setIsSubmittingState(false)
@@ -918,9 +779,7 @@ const TransferScreen = () => {
     railgunAddressState.ensAddress,
     railgunAddressInputState.address,
     railgunSelectedToken,
-    railgunForm,
     dispatch,
-    railgunChainId,
     addToast
   ])
 
@@ -929,7 +788,7 @@ const TransferScreen = () => {
     dispatch({
       type: 'MAIN_CONTROLLER_HANDLE_SIGN_AND_BROADCAST_ACCOUNT_OP',
       params: {
-        updateType: 'Railgun'
+        updateType: 'RailgunV2'
       }
     })
   }, [dispatch])
@@ -937,7 +796,7 @@ const TransferScreen = () => {
   const handleUpdateStatus = useCallback(
     (status: SigningStatus) => {
       dispatch({
-        type: 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS',
+        type: 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS',
         params: {
           status
         }
@@ -949,7 +808,7 @@ const TransferScreen = () => {
   const updateController = useCallback(
     (params: { signingKeyAddr?: Key['addr']; signingKeyType?: Key['type'] }) => {
       dispatch({
-        type: 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE',
+        type: 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE',
         params
       })
     },
@@ -1190,7 +1049,7 @@ const TransferScreen = () => {
 
       {!currentLatestBroadcastedAccountOp && (
         <Estimation
-          updateType="Railgun"
+          updateType="RailgunV2"
           estimationModalRef={railgunForm.estimationModalRef}
           closeEstimationModal={railgunForm.closeEstimationModal}
           updateController={updateController}

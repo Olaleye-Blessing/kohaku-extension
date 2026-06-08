@@ -1,385 +1,282 @@
-/* eslint-disable no-console */
-import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react'
 
-import useDeepMemo from '@common/hooks/useDeepMemo'
+import { isValidAddress } from '@ambire-common/services/address'
 import useBackgroundService from '@web/hooks/useBackgroundService'
 import useControllerState from '@web/hooks/useControllerState'
+import useDeepMemo from '@common/hooks/useDeepMemo'
 import useSelectedAccountControllerState from '@web/hooks/useSelectedAccountControllerState'
-
-import { type RailgunAccount, type Indexer } from '@kohaku-eth/railgun'
-
-import { ZERO_ADDRESS } from '@ambire-common/services/socket/constants'
-
-import type { RailgunAccountCache } from '@ambire-common/controllers/railgun/railgun'
 
 import {
   EnhancedRailgunControllerState,
+  RailgunAssetAmount,
   RailgunBalance,
-  RailgunReactState,
-  TrackedRailgunAccount
+  RailgunFormUpdate,
+  RailgunReactState
 } from './types'
-import { DEFAULT_CHAIN_ID, DEFAULT_TRACKED_ACCOUNTS } from './constants'
-import { getProvider, type RailgunProviders } from './utils/provider'
-import { BackgroundService } from './utils/backgroundService'
-import { syncSingleAccount } from './utils/accountSyn'
-import { aggregateBalances } from './utils/balances'
+import { DEFAULT_CHAIN_ID } from './constants'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTEXT
+//
+// The single source of truth for the Railgun UI, built entirely on the new
+// host-interface SDK:
+//   • SDK state (balances, zkAddress, sync, sign-op, broadcast) is mirrored from
+//     the background `railgunV2` controller.
+//   • Form state (selected token, amounts, recipient) is plain local React state.
+//
+// There is no dependency on the legacy `railgun` controller or any in-browser
+// indexing. Operations follow the SDK test files: instantiate (init) → balance
+// (sync) → prepareShield / prepareUnshield / prepareTransfer → broadcast.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_ADDRESS_STATE = {
+  fieldValue: '',
+  ensAddress: '',
+  isDomainResolving: false
+}
+
+const EMPTY_VALIDATION = {
+  amount: { success: false, message: '' },
+  recipientAddress: { success: false, message: '' }
+}
+
+type RailgunFormState = {
+  selectedToken: any
+  depositAmount: string
+  withdrawalAmount: string
+  addressState: typeof DEFAULT_ADDRESS_STATE
+  amountFieldMode: 'token' | 'fiat'
+  amountInFiat: string
+  maxAmount: string
+  isRecipientAddressUnknown: boolean
+  isRecipientAddressUnknownAgreed: boolean
+  withdrawAsWETH: boolean
+  privacyProvider: string
+  programmaticUpdateCounter: number
+  latestBroadcastedToken: any
+}
+
+const DEFAULT_FORM_STATE: RailgunFormState = {
+  selectedToken: null,
+  depositAmount: '',
+  withdrawalAmount: '',
+  addressState: { ...DEFAULT_ADDRESS_STATE },
+  amountFieldMode: 'token',
+  amountInFiat: '',
+  maxAmount: '',
+  isRecipientAddressUnknown: false,
+  isRecipientAddressUnknownAgreed: false,
+  withdrawAsWETH: false,
+  privacyProvider: 'railgun',
+  programmaticUpdateCounter: 0,
+  latestBroadcastedToken: null
+}
 
 const RailgunControllerStateContext = createContext<EnhancedRailgunControllerState>(
   {} as EnhancedRailgunControllerState
 )
 
 const RailgunControllerStateProvider: React.FC<any> = ({ children }) => {
-  const controller = 'railgun'
-
-  // snapshot of background state (what controller.toJSON() returns)
-  const bgState = useControllerState(controller)
-  const memoizedBgState = useDeepMemo(bgState, controller)
+  const { dispatch } = useBackgroundService()
+  const { account: selectedAccount } = useSelectedAccountControllerState()
 
   const keystoreState = useControllerState('keystore')
   const isUnlocked = !!keystoreState?.isUnlocked
 
-  // background dispatcher
-  const { dispatch } = useBackgroundService()
+  // SDK-backed controller state (balance, syncState, zkAddress, sign-op, …)
+  const v2State = useControllerState('railgunV2')
+  const memoizedV2State = useDeepMemo(v2State, 'railgunV2')
 
-  // currently selected account (avoid syncing when none is selected)
-  const { account: selectedAccount } = useSelectedAccountControllerState()
+  // Local, React-only form state.
+  const [form, setForm] = useState<RailgunFormState>(DEFAULT_FORM_STATE)
 
-  // local react-only railgun sync state (simple)
-  const [railgunAccountsState, setRailgunAccountsState] = useState<RailgunReactState>({
-    status: 'idle',
-    error: undefined,
-    balances: [{ tokenAddress: ZERO_ADDRESS, amount: '0' }],
-    accounts: [],
-    chainId: DEFAULT_CHAIN_ID,
-    lastSyncedBlock: 0
-  })
+  const chainId = DEFAULT_CHAIN_ID
 
-  // Store synced account instance for direct access (created during loadPrivateAccount)
-  const [syncedDefaultRailgunAccount, setSyncedDefaultRailgunAccount] =
-    useState<RailgunAccount | null>(null)
-  const [syncedDefaultRailgunIndexer, setSyncedDefaultRailgunIndexer] = useState<Indexer | null>(
-    null
-  )
-
-  // refs to avoid re-entrancy & track initial load
-  const hasLoadedOnceRef = useRef<boolean>(false) // track if we've loaded once on startup
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const isRunningRef = useRef(false)
-
-  const chainId = memoizedBgState.chainId || DEFAULT_CHAIN_ID
-
-  const providerRef = useRef<RailgunProviders | null>(null)
   useEffect(() => {
-    if (!dispatch) return
+    if (!Object.keys(v2State).length)
+      dispatch?.({ type: 'INIT_CONTROLLER_STATE', params: { controller: 'railgunV2' } })
+  }, [dispatch, v2State])
 
-    providerRef.current = getProvider(chainId, dispatch)
-    return () => {
-      providerRef.current = null
-    }
-  }, [chainId, dispatch])
-
-  const bgService = useMemo(() => {
-    if (!dispatch) return null
-
-    return new BackgroundService(() => memoizedBgState, dispatch)
-  }, [dispatch, memoizedBgState])
-
-  // Reset hasLoadedOnceRef when ChainId changes (allows loading for new chain)
-  useEffect(() => {
-    console.log('[RailgunContext][Reset] Chain changed', {
-      chainId
-    })
-
-    if (abortControllerRef.current) {
-      console.log('[RailgunContext][Reset] Aborting in-flight sync')
-      abortControllerRef.current.abort()
-      abortControllerRef.current = null
-    }
-
-    hasLoadedOnceRef.current = false
-
-    setRailgunAccountsState((prev) => ({
-      ...prev,
-      status: 'idle',
-      error: undefined
+  // Map the SDK balances ({ asset:{__type,contract}, amount:bigint }) into the
+  // simple { tokenAddress, amount } view-model the screens expect.
+  const balances = useMemo<RailgunBalance[]>(() => {
+    const raw = memoizedV2State?.balance ?? []
+    return raw.map((b: any) => ({
+      tokenAddress: b.asset?.contract ?? '',
+      amount: (b.amount ?? 0n).toString()
     }))
-  }, [chainId])
+  }, [memoizedV2State])
 
-  useEffect(() => {
-    if (isUnlocked) {
-      // hasAttemptedAutoLoadRef.current = false
-      hasLoadedOnceRef.current = false
-      console.log('[RailgunContext][Guards] RESET hasAttemptedAutoLoad on unlock')
-    }
-  }, [isUnlocked])
-
-  const getAccountCacheFromBg = useCallback(
-    async (zkAddress: string, _chainId: number): Promise<RailgunAccountCache | null> => {
-      // if (!bgServiceRef.current) throw new Error('BackgroundServiceHelper not initialized')
-      // return bgServiceRef.current.getAccountCacheFromBg(zkAddress, _chainId)
-
-      if (!bgService) throw new Error('BackgroundService not initialized')
-      return bgService.getAccountCacheFromBg(zkAddress, _chainId)
-    },
-    [bgService]
-  )
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Core load (single-flight, minimal transitions)
-  // ───────────────────────────────────────────────────────────────────────────
-  const loadPrivateAccount = useCallback(
-    async (force = false) => {
-      console.log('[RailgunContext][LPA] invoked', {
-        force,
-        isUnlocked,
-        isRunningRef: isRunningRef.current,
-        hasLoadedOnce: hasLoadedOnceRef.current,
-        hasSelectedAccount: !!selectedAccount,
-        selectedAccountAddr: selectedAccount?.addr
-      })
-
-      if (!isUnlocked) {
-        console.log('[RailgunContext][LPA] SKIPPED: keystore is locked (isUnlocked=false)')
-        return
-      }
-
-      if (isRunningRef.current) {
-        console.log('[RailgunContext][LPA] SKIPPED: sync already in progress (status="running")')
-        return
-      }
-
-      // If already loaded once and not forced, skip (only allow manual refresh)
-      if (!force && hasLoadedOnceRef.current) {
-        console.log(
-          '[RailgunContext][LPA] SKIPPED: already loaded once and force=false (hasLoadedOnce=true). Use refreshPrivateAccount() to reload.'
-        )
-        return
-      }
-
-      if (!selectedAccount) {
-        console.log('[RailgunContext][LPA] SKIPPED: no selected account (selectedAccount=null)')
-        return
-      }
-
-      if (!bgService) {
-        console.log('[RailgunContext][LPA] SKIPPED: background service not initialized')
-        return
-      }
-
-      console.log('[RailgunContext][LPA] STARTING sync for account:', selectedAccount.addr)
-
-      abortControllerRef.current = new AbortController()
-      isRunningRef.current = true
-
-      setRailgunAccountsState((prev) => ({
-        ...prev,
-        status: 'running',
-        error: undefined,
-        chainId
-      }))
-
-      try {
-        const tracked = DEFAULT_TRACKED_ACCOUNTS
-        const newAccountsMeta: TrackedRailgunAccount[] = []
-        const balancesForAggregation: RailgunBalance[][] = []
-
-        let earliestLastSyncedBlock: number = 0
-
-        console.log('[RailgunContext - LPA] sync account with new logs')
-        const providers = providerRef.current!
-        if (!providers) {
-          throw new Error('Railgun providers are not available')
-        }
-
-        // ——— per-account init ———
-        // eslint-disable-next-line no-restricted-syntax
-        for (const item of tracked) {
-          if (abortControllerRef.current?.signal.aborted) {
-            throw new Error('Sync aborted')
-          }
-          // eslint-disable-next-line no-await-in-loop
-          const syncSingleAccountResult = await syncSingleAccount({
-            item,
-            chainId,
-            logsProvider: providers.logsProvider,
-            verificationProvider: providers.verificationProvider,
-            bgService
-          })
-
-          newAccountsMeta.push(syncSingleAccountResult.accountMeta)
-          balancesForAggregation.push(syncSingleAccountResult.balances)
-
-          // Store the account instance for direct access (only for default account, index 0)
-          if (item.index === 0) {
-            setSyncedDefaultRailgunAccount(syncSingleAccountResult.account)
-            setSyncedDefaultRailgunIndexer(syncSingleAccountResult.indexer)
-          }
-
-          if (
-            earliestLastSyncedBlock === 0 ||
-            syncSingleAccountResult.effectiveLastSyncedBlock < earliestLastSyncedBlock
-          ) {
-            earliestLastSyncedBlock = syncSingleAccountResult.effectiveLastSyncedBlock
-          }
-        }
-
-        const aggregatedBalances = aggregateBalances(balancesForAggregation)
-
-        hasLoadedOnceRef.current = true
-        setRailgunAccountsState((prev) => ({
-          ...prev,
-          status: 'ready',
-          balances: aggregatedBalances,
-          accounts: newAccountsMeta,
-          lastSyncedBlock: earliestLastSyncedBlock
-        }))
-        console.log('[RailgunContext - LPA] FINISHED LPA !!! balances:', aggregatedBalances)
-      } catch (err: any) {
-        console.error('[RailgunContext] load failed', err)
-        // Don't mark as loaded on error, so it can retry
-        if (err?.message !== 'Sync aborted') {
-          setRailgunAccountsState((prev) => ({
-            ...prev,
-            status: 'error',
-            error: err?.message || String(err)
-          }))
-        }
-      } finally {
-        abortControllerRef.current = null
-        isRunningRef.current = false
-      }
-    },
-    [selectedAccount, chainId, isUnlocked, bgService]
-  )
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Public refresh: bypasses "already loaded" check and runs immediately
-  // ───────────────────────────────────────────────────────────────────────────
-  const refreshPrivateAccount = useCallback(async () => {
-    console.log('[RailgunContext][Refresh] invoked', {
-      isRunningRef: isRunningRef.current
-    })
-
-    if (isRunningRef.current) {
-      console.log('[RailgunContext][Refresh] SKIPPED: sync already in progress', {
-        isRunningRef: isRunningRef.current
-      })
-      return
-    }
-
-    console.log('[RailgunContext][Refresh] STARTING forced reload')
-    // Force reload by passing true - this will resync from cache to latest block
-    await loadPrivateAccount(true)
-    console.log('[RailgunContext][Refresh] COMPLETED')
-  }, [loadPrivateAccount])
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // init background controller state if missing
-  // ───────────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!Object.keys(bgState).length) {
-      dispatch?.({ type: 'INIT_CONTROLLER_STATE', params: { controller } })
-    }
-  }, [dispatch, bgState])
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Auto-load exactly once on startup (when selectedAccount becomes available)
-  // ───────────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const guards = {
-      isUnlocked,
-      hasSelectedAccount: !!selectedAccount,
-      selectedAccountAddr: selectedAccount?.addr,
-      hasLoadedOnce: hasLoadedOnceRef.current
-    }
-    console.log('[RailgunContext][AutoLoad] effect triggered', guards)
-
-    if (!isUnlocked) {
-      console.log('[RailgunContext][AutoLoad] SKIPPED: keystore locked (isUnlocked=false)')
-      return
-    }
-    if (!selectedAccount) {
-      console.log('[RailgunContext][AutoLoad] SKIPPED: no selected account')
-      return
-    }
-    if (hasLoadedOnceRef.current) {
-      console.log('[RailgunContext][AutoLoad] SKIPPED: already loaded once (hasLoadedOnce=true)')
-      return
-    }
-    if (railgunAccountsState.status !== 'idle') {
-      console.log(
-        '[RailgunContext][AutoLoad] SKIPPED: not idle, already attempted',
-        railgunAccountsState.status
-      )
-      return
-    }
-
-    console.log(
-      '[RailgunContext][AutoLoad] SCHEDULING load in 100ms for account:',
-      selectedAccount.addr
-    )
-    const t = setTimeout(() => {
-      console.log('[RailgunContext][AutoLoad] EXECUTING scheduled load')
-      // hasAttemptedAutoLoadRef.current = true
-      // eslint-disable-next-line no-void
-      void loadPrivateAccount(false)
-    }, 100)
-    return () => clearTimeout(t)
-  }, [isUnlocked, selectedAccount])
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // derive “view model” for UI
-  // ───────────────────────────────────────────────────────────────────────────
-  const value: EnhancedRailgunControllerState = useMemo(() => {
-    const status = railgunAccountsState.status
-    const isAccountLoaded = status === 'ready'
-    const isLoadingAccount = status === 'running'
-    const isRefreshing = status === 'running'
-    const isReadyToLoad = status === 'ready'
+  const railgunAccountsState = useMemo<RailgunReactState>(() => {
+    const syncState = memoizedV2State?.syncState ?? 'unsynced'
+    const status =
+      // eslint-disable-next-line no-nested-ternary
+      syncState === 'syncing' ? 'running' : syncState === 'synced' ? 'ready' : 'idle'
 
     return {
-      // bg snapshot first
-      ...memoizedBgState,
+      status,
+      error: memoizedV2State?.initializationError ?? undefined,
+      balances,
+      chainId
+    }
+  }, [memoizedV2State, balances, chainId])
 
-      // stabilize a few bg fields
-      selectedToken: memoizedBgState.selectedToken ?? null,
-      maxAmount: memoizedBgState.maxAmount ?? '',
-      privacyProvider: memoizedBgState.privacyProvider ?? 'railgun',
-      validationFormMsgs: memoizedBgState.validationFormMsgs,
+  const validationFormMsgs = useMemo(() => {
+    const msgs = {
+      amount: { ...EMPTY_VALIDATION.amount },
+      recipientAddress: { ...EMPTY_VALIDATION.recipientAddress }
+    }
 
-      // simplified state
+    if (form.depositAmount && Number(form.depositAmount) > 0) {
+      msgs.amount = { success: true, message: '' }
+    }
+
+    const recipient = form.addressState.ensAddress || form.addressState.fieldValue
+    if (recipient) {
+      const isRailgunAddress = recipient.toLowerCase().startsWith('0zk')
+      msgs.recipientAddress =
+        isRailgunAddress || isValidAddress(recipient)
+          ? { success: true, message: '' }
+          : { success: false, message: 'Invalid address format' }
+    }
+
+    return msgs
+  }, [form.depositAmount, form.addressState])
+
+  // ── form actions ──
+  const update = useCallback((u: RailgunFormUpdate) => {
+    setForm((prev) => {
+      const next: RailgunFormState = { ...prev }
+      if (u.selectedToken !== undefined) next.selectedToken = u.selectedToken
+      if (typeof u.depositAmount === 'string') next.depositAmount = u.depositAmount
+      if (typeof u.withdrawalAmount === 'string') next.withdrawalAmount = u.withdrawalAmount
+      if (u.addressState) next.addressState = { ...prev.addressState, ...u.addressState }
+      if (u.amountFieldMode) next.amountFieldMode = u.amountFieldMode
+      if (typeof u.amountInFiat === 'string') next.amountInFiat = u.amountInFiat
+      if (typeof u.maxAmount === 'string') next.maxAmount = u.maxAmount
+      if (typeof u.isRecipientAddressUnknown === 'boolean')
+        next.isRecipientAddressUnknown = u.isRecipientAddressUnknown
+      if (typeof u.isRecipientAddressUnknownAgreed === 'boolean')
+        next.isRecipientAddressUnknownAgreed = u.isRecipientAddressUnknownAgreed
+      if (typeof u.withdrawAsWETH === 'boolean') next.withdrawAsWETH = u.withdrawAsWETH
+      if (typeof u.privacyProvider === 'string') next.privacyProvider = u.privacyProvider
+      return next
+    })
+  }, [])
+
+  const resetForm = useCallback(() => setForm(DEFAULT_FORM_STATE), [])
+
+  // ── SDK actions (dispatch to the railgunV2 background controller) ──
+  const loadPrivateAccount = useCallback(async () => {
+    if (!isUnlocked || !selectedAccount || !dispatch) return
+    dispatch({ type: 'RAILGUN_V2_CONTROLLER_INIT' })
+    dispatch({ type: 'RAILGUN_V2_CONTROLLER_SYNC' })
+  }, [dispatch, isUnlocked, selectedAccount])
+
+  const refreshPrivateAccount = useCallback(async () => {
+    if (!dispatch) return
+    dispatch({ type: 'RAILGUN_V2_CONTROLLER_SYNC' })
+  }, [dispatch])
+
+  const shield = useCallback(
+    (asset: RailgunAssetAmount) => {
+      dispatch({ type: 'RAILGUN_V2_CONTROLLER_SHIELD', params: { asset } })
+    },
+    [dispatch]
+  )
+
+  const unshieldTo = useCallback(
+    (asset: RailgunAssetAmount, to: `0x${string}`) => {
+      dispatch({ type: 'RAILGUN_V2_CONTROLLER_UNSHIELD_TO', params: { asset, to } })
+    },
+    [dispatch]
+  )
+
+  const transferTo = useCallback(
+    (asset: RailgunAssetAmount, to: `0zk${string}`) => {
+      dispatch({ type: 'RAILGUN_V2_CONTROLLER_TRANSFER_TO', params: { asset, to } })
+    },
+    [dispatch]
+  )
+
+  const setUserProceeded = useCallback(
+    (proceeded: boolean) => {
+      dispatch({ type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED', params: { proceeded } })
+    },
+    [dispatch]
+  )
+
+  const destroyLatestBroadcastedAccountOp = useCallback(() => {
+    dispatch({ type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP' })
+  }, [dispatch])
+
+  // Auto-sync once the account is available & unlocked.
+  useEffect(() => {
+    if (!isUnlocked || !selectedAccount) return
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    loadPrivateAccount()
+  }, [isUnlocked, selectedAccount, loadPrivateAccount])
+
+  console.log('__ railgunAccountsState __', railgunAccountsState)
+
+  const value: EnhancedRailgunControllerState = useMemo(() => {
+    const status = railgunAccountsState.status
+
+    return {
+      // local form state
+      selectedToken: form.selectedToken,
+      depositAmount: form.depositAmount,
+      withdrawalAmount: form.withdrawalAmount,
+      addressState: form.addressState,
+      amountFieldMode: form.amountFieldMode,
+      amountInFiat: form.amountInFiat,
+      maxAmount: form.maxAmount,
+      isRecipientAddressUnknown: form.isRecipientAddressUnknown,
+      isRecipientAddressUnknownAgreed: form.isRecipientAddressUnknownAgreed,
+      programmaticUpdateCounter: form.programmaticUpdateCounter,
+      withdrawAsWETH: form.withdrawAsWETH,
+      privacyProvider: form.privacyProvider,
+      chainId,
+      validationFormMsgs,
+      latestBroadcastedToken: form.latestBroadcastedToken,
+
+      // SDK-backed
       railgunAccountsState,
-
-      // flags
-      isAccountLoaded,
-      isLoadingAccount,
-      isRefreshing,
-      isReadyToLoad,
+      zkAddress: memoizedV2State?.zkAddress ?? null,
+      signAccountOpController: memoizedV2State?.signAccountOpController ?? null,
+      latestBroadcastedAccountOp: memoizedV2State?.latestBroadcastedAccountOp ?? null,
+      hasProceeded: memoizedV2State?.hasProceeded ?? false,
+      isAccountLoaded: status === 'ready',
+      isLoadingAccount: status === 'running',
+      isRefreshing: status === 'running',
+      isReadyToLoad: status === 'ready',
 
       // actions
+      update,
+      resetForm,
+      setUserProceeded,
+      destroyLatestBroadcastedAccountOp,
       loadPrivateAccount,
       refreshPrivateAccount,
-      getAccountCache: getAccountCacheFromBg,
-
-      // expose default keys if bg already has them cached
-      defaultRailgunKeys: memoizedBgState.defaultRailgunKeys ?? null,
-
-      // expose synced account instance for direct use
-      syncedDefaultRailgunAccount,
-      syncedDefaultRailgunIndexer
+      shield,
+      unshieldTo,
+      transferTo
     }
   }, [
-    memoizedBgState,
+    form,
+    chainId,
+    validationFormMsgs,
     railgunAccountsState,
+    memoizedV2State,
+    update,
+    resetForm,
+    setUserProceeded,
+    destroyLatestBroadcastedAccountOp,
     loadPrivateAccount,
     refreshPrivateAccount,
-    getAccountCacheFromBg,
-    syncedDefaultRailgunAccount,
-    syncedDefaultRailgunIndexer
+    shield,
+    unshieldTo,
+    transferTo
   ])
 
   return (

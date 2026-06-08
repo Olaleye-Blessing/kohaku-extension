@@ -47,6 +47,7 @@ import {
   ALCHEMY_API_KEY
 } from '@env'
 import * as Sentry from '@sentry/browser'
+import { ensureInitialized as ensureRailgunInitialized } from '@kohaku-eth/railgun'
 import { browser, platform } from '@web/constants/browserapi'
 import { Action } from '@web/extension-services/background/actions'
 import AutoLockController from '@web/extension-services/background/controllers/auto-lock'
@@ -361,6 +362,19 @@ function getIntervalRefreshTime(constUpdateInterval: number, newestOpTimestamp: 
     // which already provides a native and well-optimized fetch API.
     // @ts-ignore
     return fetch(url, initWithCustomHeaders)
+  }
+
+  // Initialize the Railgun SDK WASM with an explicit URL BEFORE the controller
+  // is created. The SDK otherwise auto-loads the wasm via a Node-only
+  // `node:fs/promises` path that doesn't exist in the extension/service-worker
+  // environment. We share a single railgun module instance (webpack alias), so
+  // this primes the SDK's module-level init promise for createRailgunPlugin.
+  try {
+    const railgunWasm = await fetch(browser.runtime.getURL('assets/railgun/index_bg.wasm'))
+    await ensureRailgunInitialized(railgunWasm)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[BG] Railgun WASM init failed', err)
   }
 
   mainCtrl = new MainController({

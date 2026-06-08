@@ -40,7 +40,6 @@ import { CustomToken, TokenPreference } from '@ambire-common/libs/portfolio/cust
 import { THEME_TYPES } from '@common/styles/themeConfig'
 import { LOG_LEVELS } from '@web/utils/logger'
 
-import type { RailgunAccountCache } from '@ambire-common/controllers/railgun/railgun'
 import { AUTO_LOCK_TIMES } from './controllers/auto-lock'
 import { controllersMapping } from './types'
 
@@ -405,7 +404,7 @@ type SignAccountOpUpdateAction = {
       | 'Transfer&TopUp'
       | 'PrivacyPools'
       | 'PrivacyPoolsV1'
-      | 'Railgun'
+      | 'RailgunV2'
     accountOp?: AccountOp
     gasPrices?: GasRecommendation[]
     estimation?: FullEstimation
@@ -435,8 +434,8 @@ type MainControllerHandleSignAndBroadcastAccountOp = {
       | 'Swap&Bridge'
       | 'Transfer&TopUp'
       | 'PrivacyPools'
-      | 'Railgun'
       | 'PrivacyPoolsV1'
+      | 'RailgunV2'
   }
 }
 
@@ -876,96 +875,6 @@ type PrivacyControllerAddImportedAccountToActivityControllerAction = {
   }
 }
 
-type RailgunControllerUpdateFormAction = {
-  type: 'RAILGUN_CONTROLLER_UPDATE_FORM'
-  params: {
-    depositAmount?: string
-    withdrawalAmount?: string
-    seedPhrase?: string
-    targetAddress?: string
-    importedSecretNote?: string
-    privacyProvider?: string
-  }
-}
-
-type RailgunControllerUnloadScreenAction = {
-  type: 'RAILGUN_CONTROLLER_UNLOAD_SCREEN'
-}
-
-type RailgunControllerSignAccountOpUpdateAction = {
-  type: 'RAILGUN_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE'
-  params: {
-    status: SigningStatus
-  }
-}
-
-type RailgunControllerHasUserProceededAction = {
-  type: 'RAILGUN_CONTROLLER_HAS_USER_PROCEEDED'
-  params: {
-    proceeded: boolean
-  }
-}
-
-type RailgunControllerDestroySignAccountOpAction = {
-  type: 'RAILGUN_CONTROLLER_DESTROY_SIGN_ACCOUNT_OP'
-}
-
-type RailgunControllerDestroyLatestBroadcastedAccountOpAction = {
-  type: 'RAILGUN_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
-}
-
-type RailgunControllerSyncSignAccountOpAction = {
-  type: 'RAILGUN_CONTROLLER_SYNC_SIGN_ACCOUNT_OP'
-  params: {
-    calls: Call[]
-  }
-}
-
-type RailgunControllerDirectBroadcastWithdrawalAction = {
-  type: 'RAILGUN_CONTROLLER_DIRECT_BROADCAST_WITHDRAWAL'
-  params: {
-    to: string
-    data: string
-    value: string
-    chainId: number
-    isInternalTransfer?: boolean
-    tokenAddress: string
-    amount: string
-    recipient: string
-    feeFormatted: string | null
-  }
-}
-
-type RailgunControllerResetFormAction = {
-  type: 'RAILGUN_CONTROLLER_RESET_FORM'
-}
-
-type RailgunControllerDeriveRailgunKeysAction = {
-  type: 'RAILGUN_CONTROLLER_DERIVE_RAILGUN_KEYS'
-  params: {
-    index: number
-  }
-}
-
-type RailgunControllerGetDefaultRailgunKeysAction = {
-  type: 'RAILGUN_CONTROLLER_GET_DEFAULT_RAILGUN_KEYS'
-}
-
-type RailgunControllerGetAccountCacheAction = {
-  type: 'RAILGUN_CONTROLLER_GET_ACCOUNT_CACHE'
-  params: {
-    zkAddress: string
-    chainId: number
-  }
-}
-type RailgunControllerSetAccountCacheAction = {
-  type: 'RAILGUN_CONTROLLER_SET_ACCOUNT_CACHE'
-  params: {
-    zkAddress: string
-    chainId: number
-    cache: RailgunAccountCache
-  }
-}
 type PrivacyPoolsV1ControllerInitAction = {
   type: 'PRIVACY_POOLS_V1_CONTROLLER_INIT'
   params: {
@@ -1020,6 +929,71 @@ type PrivacyPoolsV1ControllerHasUserProceededAction = {
 
 type PrivacyPoolsV1ControllerDestroyLatestBroadcastedAccountOpAction = {
   type: 'PRIVACY_POOLS_V1_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
+}
+
+type RailgunV2AssetAmount = {
+  asset: { __type: 'erc20'; contract: `0x${string}` }
+  amount: bigint
+}
+
+type RailgunV2ControllerInitAction = {
+  type: 'RAILGUN_V2_CONTROLLER_INIT'
+}
+
+type RailgunV2ControllerSyncAction = {
+  type: 'RAILGUN_V2_CONTROLLER_SYNC'
+}
+
+type RailgunV2ControllerShieldAction = {
+  type: 'RAILGUN_V2_CONTROLLER_SHIELD'
+  params: { asset: RailgunV2AssetAmount }
+}
+
+type RailgunV2ControllerPrepareUnshieldAction = {
+  type: 'RAILGUN_V2_CONTROLLER_PREPARE_UNSHIELD'
+  params: { asset: RailgunV2AssetAmount; to: `0x${string}` }
+}
+
+type RailgunV2ControllerUnshieldAction = {
+  type: 'RAILGUN_V2_CONTROLLER_UNSHIELD'
+}
+
+type RailgunV2ControllerPrepareTransferAction = {
+  type: 'RAILGUN_V2_CONTROLLER_PREPARE_TRANSFER'
+  params: { asset: RailgunV2AssetAmount; to: `0zk${string}` }
+}
+
+type RailgunV2ControllerTransferAction = {
+  type: 'RAILGUN_V2_CONTROLLER_TRANSFER'
+}
+
+type RailgunV2ControllerUnshieldToAction = {
+  type: 'RAILGUN_V2_CONTROLLER_UNSHIELD_TO'
+  params: { asset: RailgunV2AssetAmount; to: `0x${string}` }
+}
+
+type RailgunV2ControllerTransferToAction = {
+  type: 'RAILGUN_V2_CONTROLLER_TRANSFER_TO'
+  params: { asset: RailgunV2AssetAmount; to: `0zk${string}` }
+}
+
+type RailgunV2ControllerSignAccountOpUpdateAction = {
+  type: 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE'
+  params: { [key: string]: any }
+}
+
+type RailgunV2ControllerSignAccountOpUpdateStatusAction = {
+  type: 'RAILGUN_V2_CONTROLLER_SIGN_ACCOUNT_OP_UPDATE_STATUS'
+  params: { status: any }
+}
+
+type RailgunV2ControllerHasUserProceededAction = {
+  type: 'RAILGUN_V2_CONTROLLER_HAS_USER_PROCEEDED'
+  params: { proceeded: boolean }
+}
+
+type RailgunV2ControllerDestroyLatestBroadcastedAccountOpAction = {
+  type: 'RAILGUN_V2_CONTROLLER_DESTROY_LATEST_BROADCASTED_ACCOUNT_OP'
 }
 
 type ProviderRpcRequestAction = {
@@ -1186,19 +1160,6 @@ export type Action =
   | PrivacyControllerResetSecretAction
   | PrivacyControllerGeneratePPv1KeysAction
   | PrivacyControllerAddImportedAccountToActivityControllerAction
-  | RailgunControllerUpdateFormAction
-  | RailgunControllerUnloadScreenAction
-  | RailgunControllerSignAccountOpUpdateAction
-  | RailgunControllerHasUserProceededAction
-  | RailgunControllerDestroySignAccountOpAction
-  | RailgunControllerDestroyLatestBroadcastedAccountOpAction
-  | RailgunControllerSyncSignAccountOpAction
-  | RailgunControllerDirectBroadcastWithdrawalAction
-  | RailgunControllerResetFormAction
-  | RailgunControllerDeriveRailgunKeysAction
-  | RailgunControllerGetDefaultRailgunKeysAction
-  | RailgunControllerGetAccountCacheAction
-  | RailgunControllerSetAccountCacheAction
   | PrivacyPoolsV1ControllerInitAction
   | PrivacyPoolsV1ControllerSyncAction
   | PrivacyPoolsV1ControllerShieldAction
@@ -1209,5 +1170,18 @@ export type Action =
   | PrivacyPoolsV1ControllerSignAccountOpUpdateStatusAction
   | PrivacyPoolsV1ControllerHasUserProceededAction
   | PrivacyPoolsV1ControllerDestroyLatestBroadcastedAccountOpAction
+  | RailgunV2ControllerInitAction
+  | RailgunV2ControllerSyncAction
+  | RailgunV2ControllerShieldAction
+  | RailgunV2ControllerPrepareUnshieldAction
+  | RailgunV2ControllerUnshieldAction
+  | RailgunV2ControllerPrepareTransferAction
+  | RailgunV2ControllerTransferAction
+  | RailgunV2ControllerUnshieldToAction
+  | RailgunV2ControllerTransferToAction
+  | RailgunV2ControllerSignAccountOpUpdateAction
+  | RailgunV2ControllerSignAccountOpUpdateStatusAction
+  | RailgunV2ControllerHasUserProceededAction
+  | RailgunV2ControllerDestroyLatestBroadcastedAccountOpAction
   | PortfolioControllerLoadAccountsTotalBalances
   | ProviderRpcRequestAction
